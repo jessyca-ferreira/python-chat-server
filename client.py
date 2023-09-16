@@ -1,63 +1,57 @@
 import socket
-import os
-import math
-from pathlib import Path
+import random
+import threading
+import rdt      # importa o canal rdt criado no aquivo rdt.py
+import queue
 
-BUFFER_SIZE = 1024
-HOST = 'localhost'
+LOCALHOST = socket.gethostbyname(socket.gethostname())
 PORT = 5000
-FOLDER_PATH = Path('client-files/')
-TIMEOUT = 10
 
-dest = (HOST, PORT)             # endereco de destino (servidor)
-origin = ('localhost', 3000)    # endereco do cliente
+destination = (LOCALHOST, PORT)  
 
-client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+host = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+host.bind((LOCALHOST, random.randint(8000, 9999)))
 
-def send_file(file_name):
-    file_path = str(FOLDER_PATH / file_name)        # caminho onde se encontra o arquivo, localizado na pasta client-filess
-    client.sendto(file_name.encode(), dest)         # envio do nome do arquivo ao servidor
-    packets = packet_amount(file_path)              # quantidade de pacotes que serão enviados
-    client.sendto(packets.encode(), dest)           # informa ao servidor quantos pacotes o client enviará
-    
-    with open(file_path, 'rb') as file:
-        data = file.read(BUFFER_SIZE)
-        for i in range(int(packets)):
-            if client.sendto(data, dest):
-                data = file.read(BUFFER_SIZE)
-       
-        # o cliente recebe de volta o arquivo enviado ao servidor
-        # esse arquivo é salvo em client-files com nome modificado         
-        try:
-            received_data, server_address = client.recvfrom(BUFFER_SIZE)
-            print(received_data.decode())
-            receive_file(received_data.decode(), int(packets))
-        except:
-            pass
+client = rdt.RDTChannel(host)
+contatos = {}
+
+def receive():
+    try:
+        data, address = client.rdt_receive()     # tupla (ack, seq, data)
+        message = data[2]            
         
+        if isinstance(message, tuple):
+            contato = message[0]
+            client_address = message[1]
+            message = message[2]
+                        
+            contatos[contato] = client_address
         
-def receive_file(file_name, packets):
-    with open(str(FOLDER_PATH / file_name), 'wb') as file:
-        for i in range(packets):
-            data, server_address = client.recvfrom(BUFFER_SIZE)
-            file.write(data)
+        if message != 'ACK':    
+            print(message)
+    except:
+        pass
 
-            
-def packet_amount(file_path):
-    file_size = os.path.getsize(file_path)
-    packet_amount = str(math.ceil(file_size / BUFFER_SIZE))
-    return packet_amount
+username = input('Bem vindo! Digite "hi, meu nome eh <nome_do_usuario>" para se conectar\n')
+while not username.startswith('hi, meu nome eh'):
+    username = input()
 
-print('Para sair, user CTRL+X\n')
+client.rdt_send(username, destination)    
+receive()
 
 sending = True
 while sending:
-    file_name = input()         # nome do arquivo a ser enviado, lido pelo console
-    if file_name == '\x18':     # condição para fechar a conexão (CTRL+X)
-        client.sendto(file_name.encode(), dest)
-        sending = False
+    message = input()               
+    print('\033[1A', end='\x1b[2K')     # código ansi que apaga a linha digitada para que apenas a mensagem enviada seja lida no console
+    if message == 'bye':
+        exit()
+    elif message == 'list':
+        for name in contatos:
+            print(name)
     else:
-        send_file(file_name)
-        
-client.close()
+        client.rdt_send(message, destination)
+        receive()
 
+
+        
+    

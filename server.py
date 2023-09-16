@@ -1,50 +1,56 @@
 import socket
-from pathlib import Path
+import queue
+import datetime
+import threading
+import rdt      # importa o canal rdt criado no aquivo rdt.py
 
-BUFFER_SIZE = 1024
-HOST = 'localhost'          # endereço ip do servidor
-PORT = 3000                 # porta do servidor
-FOLDER_PATH = Path('server-files/')
-TIMEOUT = 3
+LOCALHOST = socket.gethostbyname(socket.gethostname())
+ORIGIN = (LOCALHOST, 5000)
+host = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+host.bind(ORIGIN)
 
-dest = (HOST, PORT)
-origin = ('localhost', 5000)     # endereco de origem do servidor
+server = rdt.RDTChannel(host, 'SERVER')
 
+messages = queue.Queue()
+clients = {}
 
-def receive_file(file_name):
-    file_path = str(FOLDER_PATH / file_name)
-    packets, client_address = server.recvfrom(BUFFER_SIZE)     # packets = tamanho do arquivo enviado em num de pacotes
-    packets = int(packets.decode())
-    
-    with open(file_path, 'wb+') as file:
-        for i in range(packets):
-            data, client_address = server.recvfrom(BUFFER_SIZE)
-            file.write(data)
-            
-def send_file(file_name, client_address):
-    file_path = str(FOLDER_PATH / file_name)
-    with open(file_path, 'rb') as file:
-        data = file.read(BUFFER_SIZE)
-        while data:
-            if server.sendto(data, client_address):
-                data = file.read(BUFFER_SIZE)
-            
-
-server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-server.bind(origin)
-
-finished = False
-
-while not finished:
-    data, client_address = server.recvfrom(BUFFER_SIZE)
-    if (data.decode() == '\x18'):
-        finished = True
-    else:
-        file_name = data.decode()
-        receive_file(file_name)
-        server.sendto(('received' + file_name).encode(), client_address)
-        send_file(file_name, client_address)
-    
-server.close()
+def receive():
+    try:
+        data, address = server.rdt_receive()
+        message = data[2]
         
+        if message != 'ACK' and message != None:
+            messages.put((message, address))
+    except:
+        pass
 
+def send():
+    if not messages.empty():
+        message, address = messages.get()
+        time = get_date_time()
+        if address not in clients.keys():
+            clients[address] = message[15:].strip()
+            
+            for client in clients.copy():
+                text = f'{message[15:].strip()} entrou na sala!'
+                username = message[15:].strip()
+                client_address = address[0]                
+                
+                server.rdt_send((username, client_address, text), client)
+        else:    
+            for client in clients.copy():
+                try:
+                    text = f"{address[0]}:{address[1]}/~{clients[address]}: {message} {time}"
+                    server.rdt_send(text, client)
+                except:
+                    del clients[address]                
+
+def get_date_time():
+    current_date_time = datetime.datetime.now()
+    date_time = current_date_time.strftime("%m/%d/%Y, %H:%M:%S")    
+    return date_time 
+    
+finished = False
+while not finished:
+    receive()
+    send()
