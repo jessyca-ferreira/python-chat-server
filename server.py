@@ -1,59 +1,61 @@
 import socket
-import threading
 import queue
 import datetime
-from pathlib import Path
+import rdt      # importa o canal rdt criado no aquivo rdt.py
 
-BUFFER_SIZE = 1024
-ORIGIN = ('localhost', 5000)
-server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-server.bind(ORIGIN)
+LOCALHOST = socket.gethostbyname(socket.gethostname())
+ORIGIN = (LOCALHOST, 5000)
+host = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+host.bind(ORIGIN)
 
-def receive_messages():
-    finished = False
-    while not finished:
-        try:
-            message, client_address = server.recvfrom(BUFFER_SIZE)
-            messages.put((message, client_address))
-        except:
-            pass
+server = rdt.RDTChannel(host, 'SERVER')
 
-def send_messages():
-    finished = False
-    while not finished:
-        while not messages.empty():
-            message, addr = messages.get()
-            time = get_date_time()
-            message = message.decode()
-            if addr not in clients.keys():
-                while not message.startswith('hi, meu nome eh'):
-                    message, client_address = server.recvfrom(BUFFER_SIZE)
-                    message = message.decode()
-                clients[addr] = message[15:].strip()
-                for client in clients.copy():
-                    server.sendto((f'{message[15:]} entrou na sala!').encode(), client)
-                    server.sendto(message[15:].strip().encode(), client)
-                    server.sendto(addr[0].encode(), client)
-            else:    
+messages = queue.Queue()
+clients = {}
+
+def receive():
+    try:
+        data, address = server.rdt_receive()
+        message = data[2]
+        
+        messages.put((message, address))
+    except:
+        pass
+
+def send():
+    if not messages.empty():
+        message, address = messages.get()
+        time = get_date_time()
+        if address not in clients.keys() and message != 'ACK':
+            clients[address] = message[15:].strip()
+            
+            for client in clients.copy():
+                text = f'{message[15:].strip()} entrou na sala!'
+
+                server.rdt_send(text, client)
+        else:
+            if message == 'list':
+                text = ''.join(
+                    f'{key[0]}/{key[1]} - {value}\n' for key, value in clients.items()
+                )
+                server.rdt_send(('list', text), address)
+            elif message == 'bye':
+                server.rdt_send(message, address)
+                del server.active_connections[address]
+            else:
                 for client in clients.copy():
                     try:
-                        text = f"{addr[0]}:{addr[1]}/~{clients[addr]}: {message} {time}".encode()
-                        server.sendto(text, client)
+                        text = f"{address[0]}:{address[1]}/~{clients[address]}: {message} {time}"
+                        server.rdt_send(text, client)
                     except:
-                        del clients[addr]
-
-                    
+                        del clients[address]             
 
 def get_date_time():
     current_date_time = datetime.datetime.now()
     date_time = current_date_time.strftime("%m/%d/%Y, %H:%M:%S")    
-    return date_time
-
-messages = queue.Queue()
-clients = {}
-                        
-receive = threading.Thread(target=receive_messages)
-send = threading.Thread(target=send_messages)
-
-receive.start()
-send.start()
+    return date_time 
+    
+finished = False
+while not finished:
+    receive()
+    send()
