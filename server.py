@@ -18,7 +18,8 @@ def receive():
         data, address = server.rdt_receive()
         message = data[2]
         
-        messages.put((message, address))
+        if message != 'ACK':
+            messages.put((message, address))
     except:
         pass
 
@@ -35,8 +36,9 @@ def send():
                 server.rdt_send(text, client)
         else:
             if message == 'list':
+                # broadcast da lista de conexões
                 text = ''.join(
-                    f'{key[0]}/{key[1]} - {value}\n' for key, value in clients.items()
+                    f'{key[0]}/{key[1]} - {clients[key]}\n' for key, value in server.active_connections.items() if value['state'] != 0
                 )
                 server.rdt_send(('list', text), address)
             elif message == 'bye':
